@@ -9,6 +9,10 @@ export interface UrlRecord {
   createdAt: string;
 }
 
+export interface UrlWithStats extends UrlRecord {
+  clicks: number;
+}
+
 interface UrlRow {
   id: number;
   code: string;
@@ -28,7 +32,13 @@ const toRecord = (r: UrlRow): UrlRecord => ({
 export function createUrlsRepository(db: Database.Database) {
   const insert = db.prepare('INSERT INTO urls (code, long_url, user_id) VALUES (?, ?, ?)');
   const byCode = db.prepare('SELECT * FROM urls WHERE code = ?');
-  const all = db.prepare('SELECT * FROM urls ORDER BY id DESC');
+  const byUser = db.prepare(`
+    SELECT u.*, COUNT(c.id) AS clicks
+    FROM urls u LEFT JOIN clicks c ON c.url_id = u.id
+    WHERE u.user_id = ?
+    GROUP BY u.id
+    ORDER BY u.id DESC
+  `);
   const insertClick = db.prepare('INSERT INTO clicks (url_id, user_agent) VALUES (?, ?)');
   const remove = db.prepare('DELETE FROM urls WHERE code = ? AND user_id = ?');
 
@@ -47,8 +57,12 @@ export function createUrlsRepository(db: Database.Database) {
       const row = byCode.get(code) as UrlRow | undefined;
       return row && toRecord(row);
     },
-    list(): UrlRecord[] {
-      return (all.all() as UrlRow[]).map(toRecord);
+    /** URLs del usuario, la más reciente primero, con su número de clicks. */
+    listByUser(userId: number): UrlWithStats[] {
+      return (byUser.all(userId) as (UrlRow & { clicks: number })[]).map((r) => ({
+        ...toRecord(r),
+        clicks: r.clicks,
+      }));
     },
     recordClick(urlId: number, userAgent: string | null): void {
       insertClick.run(urlId, userAgent);

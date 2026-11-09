@@ -139,21 +139,82 @@ describe('GET /:code (público)', () => {
   });
 });
 
-describe('GET /api/urls (público)', () => {
-  it('lista vacía al inicio, sin autenticación', async () => {
+describe('GET /api/urls (autenticado)', () => {
+  it('responde 401 sin token', async () => {
     const res = await request(createTestApp().app).get('/api/urls');
+    expect(res.status).toBe(401);
+  });
+
+  it('lista vacía para un usuario sin URLs', async () => {
+    const { app, alice } = await setup();
+    const res = await request(app).get('/api/urls').set(...bearer(alice.token));
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
   });
 
-  it('lista todas las URLs, la más reciente primero', async () => {
+  it('lista solo las URLs del usuario, la más reciente primero, con shortUrl', async () => {
     const { app, alice } = await setup();
+    const bob = await registerUser(app, 'bob@example.com');
     for (const url of ['https://a.com/', 'https://b.com/']) {
       await request(app).post('/api/urls').set(...bearer(alice.token)).send({ url });
     }
-    const res = await request(app).get('/api/urls');
+    await request(app).post('/api/urls').set(...bearer(bob.token)).send({ url: 'https://de-bob.com/' });
+
+    const res = await request(app).get('/api/urls').set(...bearer(alice.token));
     expect(res.body.map((u: { longUrl: string }) => u.longUrl)).toEqual(['https://b.com/', 'https://a.com/']);
+    expect(res.body[0].shortUrl).toContain(`/${res.body[0].code}`);
   });
+
+  it('incluye el número de clicks de cada URL', async () => {
+    const { app, alice } = await setup();
+    const a = await request(app).post('/api/urls').set(...bearer(alice.token)).send({ url: 'https://a.com/' });
+    await request(app).post('/api/urls').set(...bearer(alice.token)).send({ url: 'https://b.com/' });
+    await request(app).get(`/${a.body.code}`).expect(302);
+    await request(app).get(`/${a.body.code}`).expect(302);
+
+    const res = await request(app).get('/api/urls').set(...bearer(alice.token));
+    const byUrl = Object.fromEntries(res.body.map((u: { longUrl: string; clicks: number }) => [u.longUrl, u.clicks]));
+    expect(byUrl).toEqual({ 'https://a.com/': 2, 'https://b.com/': 0 });
+  });
+});
+
+describe('POST /api/urls con alias', () => {
+  const create = (app: Parameters<typeof request>[0], token: string, body: object) =>
+    request(app).post('/api/urls').set(...bearer(token)).send(body);
+
+  it('usa el alias como código y resuelve el redirect', async () => {
+    const { app, alice } = await setup();
+    const res = await create(app, alice.token, { url: 'https://example.com/', alias: 'mi-enlace_1' });
+    expect(res.status).toBe(201);
+    expect(res.body.code).toBe('mi-enlace_1');
+    expect(res.body.shortUrl).toContain('/mi-enlace_1');
+    expect((await request(app).get('/mi-enlace_1')).status).toBe(302);
+  });
+
+  it('sin alias (o null) genera un código aleatorio', async () => {
+    const { app, alice } = await setup();
+    const res = await create(app, alice.token, { url: 'https://example.com/', alias: null });
+    expect(res.body.code).toMatch(/^[A-Za-z0-9]{7}$/);
+  });
+
+  it('responde 409 si el alias ya existe, también de otro usuario', async () => {
+    const { app, alice } = await setup();
+    const bob = await registerUser(app, 'bob@example.com');
+    await create(app, alice.token, { url: 'https://a.com/', alias: 'promo' }).expect(201);
+    const res = await create(app, bob.token, { url: 'https://b.com/', alias: 'promo' });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('conflict');
+  });
+
+  it.each([[''], ['ab'], ['a'.repeat(33)], ['con espacio'], ['ñandú'], ['a/b'], [123], ['api'], ['APP'], ['health'], ['auth']])(
+    'rechaza el alias %j con 400',
+    async (alias) => {
+      const { app, db, alice } = await setup();
+      const res = await create(app, alice.token, { url: 'https://example.com/', alias });
+      expect(res.status).toBe(400);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM urls').get()).toEqual({ n: 0 });
+    },
+  );
 });
 
 describe('GET /:code — registro de clicks', () => {

@@ -15,7 +15,7 @@ Los errores tienen siempre la forma:
 | POST | `/auth/register` | No | Crea un usuario |
 | POST | `/auth/login` | No | Inicia sesión |
 | POST | `/api/urls` | Sí | Acorta una URL |
-| GET | `/api/urls` | No | Lista las URLs |
+| GET | `/api/urls` | Sí | Lista las URLs del usuario, con sus clicks |
 | DELETE | `/api/urls/:code` | Sí | Borra una URL propia |
 | GET | `/api/dashboard` | Sí | Resumen de URLs y clicks del usuario |
 | GET | `/:code` | No | Redirige (302) y registra el click |
@@ -90,6 +90,10 @@ Un fallo al registrar el click no impide la redirección.
 - `POST /auth/register` — body `{ email, password, name }`; `201` con token y usuario.
   `400` si es inválido, `409` si el email ya existe.
 - `POST /auth/login` — body `{ email, password }`; `200` con token y usuario. `401` si las credenciales son erróneas.
-- `POST /api/urls` — body `{ url }` (solo `http`/`https`); `201` con el registro y `shortUrl`.
-- `GET /api/urls` — lista todas las URLs de todos los usuarios, sin autenticación.
+- `POST /api/urls` — body `{ url, alias? }` (`url` solo `http`/`https`); `201` con el registro y `shortUrl`.
+  `alias` es opcional: 3–32 caracteres `A-Za-z0-9_-`; sin él se genera un código de 7 caracteres.
+  `400` si la url o el alias son inválidos (`api`, `app`, `auth` y `health` están reservados),
+  `409` si el alias ya está en uso.
+- `GET /api/urls` — `200` con un array de las URLs **del usuario autenticado**, la más reciente primero:
+  `{ id, code, longUrl, userId, createdAt, clicks, shortUrl }`. `clicks` cuenta todo el historial.
 - `DELETE /api/urls/:code` — `204`; `403` si la URL es de otro usuario, `404` si no existe.
