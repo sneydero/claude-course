@@ -97,3 +97,19 @@ Un fallo al registrar el click no impide la redirección.
 - `GET /api/urls` — `200` con un array de las URLs **del usuario autenticado**, la más reciente primero:
   `{ id, code, longUrl, userId, createdAt, clicks, shortUrl }`. `clicks` cuenta todo el historial.
 - `DELETE /api/urls/:code` — `204`; `403` si la URL es de otro usuario, `404` si no existe.
+
+## Interfaz web (`web/`)
+
+SPA en React + Vite que consume esta API. Por ahora solo se ejecuta en desarrollo:
+
+```bash
+JWT_SECRET=<secreto> npm run dev        # API en http://localhost:3000
+cd web && npm install && npm run dev    # UI en http://localhost:5173/app/
+cd web && npm test                      # tests de la interfaz
+```
+
+- La UI cuelga de `/app/` (por eso `app` es un alias reservado y no puede usarse como código corto).
+  El servidor de Vite reenvía `/api`, `/auth` y `/health` al backend, así que no hace falta CORS.
+- El token y el usuario se guardan en `localStorage`. El cierre de sesión los borra, y cualquier `401`
+  en una ruta protegida (token caducado o inválido) también cierra la sesión y lleva a `/login`.
+- Aún no se sirve el build (`web/dist`) desde Express.
