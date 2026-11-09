@@ -1,0 +1,62 @@
+import { randomInt } from 'node:crypto';
+import { BadRequestError, ForbiddenError, NotFoundError } from '../shared/errors.js';
+import type { UrlRecord, UrlsRepository } from './urls.repository.js';
+
+const ALPHABET = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const CODE_LENGTH = 7;
+const MAX_ATTEMPTS = 5;
+
+export function generateCode(length = CODE_LENGTH): string {
+  let code = '';
+  for (let i = 0; i < length; i++) code += ALPHABET[randomInt(ALPHABET.length)];
+  return code;
+}
+
+export function parseHttpUrl(input: unknown): string {
+  if (typeof input !== 'string') throw new BadRequestError('url debe ser un string');
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    throw new BadRequestError('url no es válida');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new BadRequestError('url debe usar http o https');
+  }
+  return parsed.href;
+}
+
+export function createUrlsService(repo: UrlsRepository) {
+  return {
+    shorten(input: unknown, userId: number): UrlRecord {
+      const longUrl = parseHttpUrl(input);
+      for (let i = 0; i < MAX_ATTEMPTS; i++) {
+        const code = generateCode();
+        if (repo.insert(code, longUrl, userId)) return repo.findByCode(code)!;
+      }
+      throw new Error('No se pudo generar un código único');
+    },
+    /** Resuelve el código y registra el click. Un fallo al registrar nunca rompe el redirect. */
+    resolve(code: string, userAgent?: string): UrlRecord | undefined {
+      const record = repo.findByCode(code);
+      if (record) {
+        try {
+          repo.recordClick(record.id, userAgent?.slice(0, 512) ?? null);
+        } catch (err) {
+          console.error('No se pudo registrar el click', err);
+        }
+      }
+      return record;
+    },
+    list: () => repo.list(),
+    remove(code: string, userId: number): void {
+      const record = repo.findByCode(code);
+      if (!record) throw new NotFoundError('Código no encontrado');
+      if (record.userId !== userId) throw new ForbiddenError('Esta URL pertenece a otro usuario');
+      // La comprobación de propiedad se repite en el DELETE para evitar carreras.
+      repo.deleteOwned(code, userId);
+    },
+  };
+}
+
+export type UrlsService = ReturnType<typeof createUrlsService>;
